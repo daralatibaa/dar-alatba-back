@@ -137,7 +137,7 @@ const policySchema = new mongoose.Schema(
       type: String,
       required: true,
       unique: true,
-      enum: ["privacy", "returns", "about", "terms"],
+      enum: ["privacy", "returns", "about", "terms", "shipping"],
     },
     titleAr: { type: String, required: true, default: "" },
     titleEn: { type: String, required: true, default: "" },
@@ -150,7 +150,7 @@ const policySchema = new mongoose.Schema(
 if (mongoose.models.Policy) {
   const keyPath = mongoose.models.Policy.schema.path("key");
   const allowed = keyPath?.enumValues || keyPath?.options?.enum || [];
-  if (!allowed.includes("about") || !allowed.includes("terms")) {
+  if (!allowed.includes("about") || !allowed.includes("terms") || !allowed.includes("shipping")) {
     mongoose.deleteModel("Policy");
   }
 }

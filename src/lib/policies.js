@@ -46,6 +46,17 @@ const KEYS = {
         "An order is confirmed after we review the details, size, color, and quantity. Prices are shown in Egyptian pounds.\n\nCheckout can be paid with Instapay, Vodafone Cash, or cash on delivery.\n\nUsing the site means you are buying for yourself or your workplace, and the order details need to be accurate for delivery.",
     },
   },
+  shipping: {
+    label: "الشحن",
+    defaults: {
+      titleAr: "الشحن",
+      titleEn: "Shipping",
+      contentAr:
+        "توصّل دار الأطباء الطلبات داخل مصر.\n\nرسوم الشحن: ٨٥ جنيهًا على الطلب.\n\nالشحن مجاني للطلبات من ٣٧٠٠ جنيه فأكثر.\n\nمدة التوصيل تختلف حسب المحافظة، ويتم تأكيد الموعد عند مراجعة الطلب على واتساب أو الهاتف 01007743765.",
+      contentEn:
+        "Dar Alatba delivers orders across Egypt.\n\nShipping fee: 85 EGP per order.\n\nFree shipping on orders of 3700 EGP or more.\n\nDelivery time depends on the governorate. Timing is confirmed when the order is reviewed on WhatsApp or by phone at 01007743765.",
+    },
+  },
 };
 
 function assertKey(key) {
