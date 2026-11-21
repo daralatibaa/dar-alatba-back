@@ -1,3 +1,5 @@
+import { ApiError } from "./http";
+import { StoreSettings } from "./models";
 import { listAnnouncements } from "./announcements";
 
 function numberEnv(name, fallback) {
@@ -12,7 +14,47 @@ export const STORE = {
   freeShippingFrom: 3700,
   embroideryPrice: numberEnv("EMBROIDERY_PRICE", 0),
   setDiscountPercent: 15,
+  shopPageSize: 12,
 };
+
+const ALLOWED_PAGE_SIZES = [6, 9, 12, 15, 18, 24, 36, 48];
+
+function parseShopPageSize(value) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const order = Number.parseInt(String(raw ?? ""), 10);
+  if (!Number.isFinite(order)) return null;
+  return ALLOWED_PAGE_SIZES.includes(order) ? order : null;
+}
+
+async function ensureStoreSettings() {
+  let item = await StoreSettings.findOne({ key: "store" });
+  if (item) return item;
+  item = await StoreSettings.create({ key: "store", shopPageSize: STORE.shopPageSize });
+  return item;
+}
+
+export async function getEditableStoreSettings() {
+  const item = await ensureStoreSettings();
+  return {
+    shopPageSize: parseShopPageSize(item.shopPageSize) || STORE.shopPageSize,
+  };
+}
+
+export async function updateEditableStoreSettings(fields) {
+  const item = await ensureStoreSettings();
+  if (fields.shopPageSize === undefined || fields.shopPageSize === "") {
+    throw new ApiError("عدد المنتجات المعروضة مطلوب");
+  }
+  const shopPageSize = parseShopPageSize(fields.shopPageSize);
+  if (shopPageSize == null) {
+    throw new ApiError("اختر عدد منتجات صالح: 6 أو 9 أو 12 أو 15 أو 18 أو 24 أو 36 أو 48");
+  }
+  item.shopPageSize = shopPageSize;
+  await item.save();
+  return {
+    shopPageSize: item.shopPageSize,
+  };
+}
 
 /** Read the free-shipping amount from ticker / announcement copy (e.g. "فوق 3700"). */
 export function parseFreeShippingThreshold(...texts) {

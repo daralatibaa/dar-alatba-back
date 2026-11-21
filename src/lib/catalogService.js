@@ -49,26 +49,98 @@ function keptText(fields, key, fallback = "", max = 2000) {
   return textValue(fields[key]).slice(0, max);
 }
 
+function normalizeColorId(value) {
+  const text = textValue(value);
+  return text || null;
+}
+
+function parseKeepImageEntries(fields) {
+  if (fields.keepImages === undefined || fields.keepImages === null) return null;
+  try {
+    const parsed = JSON.parse(String(fields.keepImages || "[]"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseNewImageColorIds(fields) {
+  try {
+    const parsed = JSON.parse(String(fields.newImageColorIds || fields.imageColorIds || "[]"));
+    return Array.isArray(parsed) ? parsed.map((id) => normalizeColorId(id)) : [];
+  } catch {
+    return [];
+  }
+}
+
 function resolveKeepImages(fields, currentImages, hasIncoming) {
   const current = Array.isArray(currentImages) ? currentImages : [];
   if (!current.length) return [];
-  if (fields.keepImages === undefined || fields.keepImages === null) {
-    return hasIncoming ? [] : current;
+  const entries = parseKeepImageEntries(fields);
+  if (entries == null) {
+    return hasIncoming
+      ? []
+      : current.map((image) => ({
+          url: image.url,
+          public_id: image.public_id,
+          colorId: normalizeColorId(image.colorId),
+        }));
   }
-  let ids = [];
-  try {
-    ids = JSON.parse(String(fields.keepImages || "[]"));
-  } catch {
-    ids = [];
+  if (!entries.length) return [];
+
+  const byId = new Map(current.map((image) => [String(image.public_id), image]));
+  if (entries.every((entry) => typeof entry === "string" || typeof entry === "number")) {
+    return entries
+      .map((id) => byId.get(String(id)))
+      .filter(Boolean)
+      .map((image) => ({
+        url: image.url,
+        public_id: image.public_id,
+        colorId: normalizeColorId(image.colorId),
+      }));
   }
-  if (!Array.isArray(ids)) ids = [];
-  const idSet = new Set(ids.map(String).filter(Boolean));
-  return current.filter((image) => idSet.has(String(image.public_id)));
+
+  return entries
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const image = byId.get(String(entry.public_id || ""));
+      if (!image) return null;
+      const hasColorField = Object.prototype.hasOwnProperty.call(entry, "colorId");
+      return {
+        url: image.url,
+        public_id: image.public_id,
+        colorId: hasColorField ? normalizeColorId(entry.colorId) : normalizeColorId(image.colorId),
+      };
+    })
+    .filter(Boolean);
 }
 
-function serializeImage(image) {
+function serializeImage(image, colorId = undefined) {
   if (!image?.url) return null;
-  return { url: image.url, public_id: image.public_id };
+  const linked =
+    colorId !== undefined ? normalizeColorId(colorId) : normalizeColorId(image.colorId);
+  return {
+    url: image.url,
+    public_id: image.public_id,
+    colorId: linked,
+  };
+}
+
+function serializeProductImages(product) {
+  const images = Array.isArray(product.images) ? product.images : [];
+  const colorIds = (product.colors || [])
+    .map((color) => (color && typeof color === "object" ? String(color._id) : String(color || "")))
+    .filter(Boolean);
+  const hasLinked = images.some((image) => normalizeColorId(image?.colorId));
+  return images
+    .map((image, index) => {
+      if (!image?.url) return null;
+      const linked = normalizeColorId(image.colorId);
+      // Legacy products: image order matched color order 1:1.
+      const legacyColor = !hasLinked && colorIds[index] ? colorIds[index] : null;
+      return serializeImage(image, linked || legacyColor);
+    })
+    .filter(Boolean);
 }
 
 const MAX_CATEGORY_DEPTH = 4;
@@ -181,12 +253,28 @@ function serializeCategory(category, byId = null) {
     depth,
     path,
     pathEn,
+    sortOrder: Number(category.sortOrder) || 0,
     isActive: category.isActive !== false,
     image: serializeImage(category.image),
     sizeChart: hasParent ? serializeImage(category.sizeChart) : null,
     createdAt: category.createdAt,
     updatedAt: category.updatedAt,
   };
+}
+
+function parseSortOrder(value, fallback = 0) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const raw = Array.isArray(value) ? value[0] : value;
+  const order = Number.parseInt(String(raw), 10);
+  if (!Number.isFinite(order)) return fallback;
+  return Math.max(0, Math.min(99999, order));
+}
+
+function byCategoryOrder(a, b) {
+  const ao = Number(a.sortOrder) || 0;
+  const bo = Number(b.sortOrder) || 0;
+  if (ao !== bo) return ao - bo;
+  return String(a.path || a.nameAr || "").localeCompare(String(b.path || b.nameAr || ""), "ar");
 }
 
 function serializeOption(option) {
@@ -274,7 +362,7 @@ function serializeProduct(product, byId = null) {
         : "",
     sizeChart:
       typeof category === "object" && category.parent ? category.sizeChart || null : null,
-    images: (product.images || []).map(serializeImage).filter(Boolean),
+    images: serializeProductImages(product),
     colors,
     sizes,
     variants,
@@ -467,11 +555,9 @@ async function assertOptionsExist(colorIds, sizeIds) {
 export async function listCategories() {
   const categories = await Category.find()
     .populate("parent", "nameAr nameEn isActive")
-    .sort({ createdAt: 1 });
+    .sort({ sortOrder: 1, createdAt: 1 });
   const byId = buildCategoryMap(categories);
-  return categories
-    .map((category) => serializeCategory(category, byId))
-    .sort((a, b) => a.path.localeCompare(b.path, "ar") || a.depth - b.depth);
+  return categories.map((category) => serializeCategory(category, byId)).sort(byCategoryOrder);
 }
 
 export async function addCategory(fields, files) {
@@ -490,10 +576,14 @@ export async function addCategory(fields, files) {
     sizeChart = await uploadImage(sizeChartFile, "dar-alatba/size-charts");
   }
 
+  const last = await Category.findOne().sort({ sortOrder: -1 }).select("sortOrder");
+  const sortOrder = parseSortOrder(fields.sortOrder, (last?.sortOrder ?? 0) + 1);
+
   const category = await Category.create({
     ...names,
     ...descriptions,
     parent,
+    sortOrder,
     isActive: parseBoolean(fields.isActive, true),
     image,
     sizeChart,
@@ -539,10 +629,13 @@ export async function updateCategory(id, fields, files) {
     }
   }
 
+  const sortOrder = parseSortOrder(fields.sortOrder, category.sortOrder ?? 0);
+
   category.set({
     ...names,
     ...descriptions,
     parent,
+    sortOrder,
     isActive: parseBoolean(fields.isActive, category.isActive),
     image,
     sizeChart,
@@ -613,9 +706,16 @@ async function productPayload(fields, files, current) {
     throw new ApiError("يجب رفع صورة واحدة على الأقل للمنتج");
   }
 
+  const newImageColorIds = parseNewImageColorIds(fields);
   const uploaded = [];
-  for (const file of incomingImages) {
-    uploaded.push(await uploadImage(file, "dar-alatba/products"));
+  for (let index = 0; index < incomingImages.length; index += 1) {
+    const file = incomingImages[index];
+    const saved = await uploadImage(file, "dar-alatba/products");
+    uploaded.push({
+      url: saved.url,
+      public_id: saved.public_id,
+      colorId: newImageColorIds[index] || null,
+    });
   }
 
   const keepIds = new Set(keepImages.map((image) => String(image.public_id)));

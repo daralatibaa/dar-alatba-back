@@ -4,6 +4,7 @@ const imageSchema = new mongoose.Schema(
   {
     url: { type: String, required: true },
     public_id: { type: String, required: true },
+    colorId: { type: String, default: null },
   },
   { _id: false },
 );
@@ -19,6 +20,7 @@ const categorySchema = new mongoose.Schema(
       ref: "Category",
       default: null,
     },
+    sortOrder: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
     image: { type: imageSchema, default: null },
     sizeChart: { type: imageSchema, default: null },
@@ -26,7 +28,11 @@ const categorySchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-if (mongoose.models.Category && !mongoose.models.Category.schema.path("sizeChart")) {
+if (
+  mongoose.models.Category &&
+  (!mongoose.models.Category.schema.path("sizeChart") ||
+    !mongoose.models.Category.schema.path("sortOrder"))
+) {
   mongoose.deleteModel("Category");
 }
 
@@ -217,8 +223,11 @@ const beonEventSchema = new mongoose.Schema(
 orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ customerPhone: 1, createdAt: -1 });
 
-if (mongoose.models.Product && !mongoose.models.Product.schema.path("brandAr")) {
-  mongoose.deleteModel("Product");
+if (mongoose.models.Product) {
+  const imageColor = mongoose.models.Product.schema.path("images")?.schema?.path("colorId");
+  if (!mongoose.models.Product.schema.path("brandAr") || !imageColor) {
+    mongoose.deleteModel("Product");
+  }
 }
 export const Product =
   mongoose.models.Product || mongoose.model("Product", productSchema);
@@ -274,3 +283,14 @@ if (mongoose.models.Customer && !mongoose.models.Customer.schema.path("cart")) {
 }
 export const Customer =
   mongoose.models.Customer || mongoose.model("Customer", customerSchema);
+
+const storeSettingsSchema = new mongoose.Schema(
+  {
+    key: { type: String, required: true, unique: true, default: "store" },
+    shopPageSize: { type: Number, default: 12, min: 3, max: 48 },
+  },
+  { timestamps: true },
+);
+
+export const StoreSettings =
+  mongoose.models.StoreSettings || mongoose.model("StoreSettings", storeSettingsSchema);
