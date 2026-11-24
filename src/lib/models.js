@@ -224,8 +224,16 @@ orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ customerPhone: 1, createdAt: -1 });
 
 if (mongoose.models.Product) {
-  const imageColor = mongoose.models.Product.schema.path("images")?.schema?.path("colorId");
-  if (!mongoose.models.Product.schema.path("brandAr") || !imageColor) {
+  try {
+    const imagesPath = mongoose.models.Product.schema.path("images");
+    const imageColor =
+      imagesPath?.schema?.path("colorId") ||
+      imagesPath?.caster?.schema?.path("colorId") ||
+      imagesPath?.$embeddedSchemaType?.schema?.path("colorId");
+    if (!mongoose.models.Product.schema.path("brandAr") || !imageColor) {
+      mongoose.deleteModel("Product");
+    }
+  } catch {
     mongoose.deleteModel("Product");
   }
 }

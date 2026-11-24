@@ -1,6 +1,4 @@
-import { del, put } from "@vercel/blob";
 import { v2 as cloudinary } from "cloudinary";
-import sharp from "sharp";
 import { ApiError } from "./http";
 
 /** Incoming request hard cap before server-side recompress. */
@@ -61,6 +59,7 @@ function safeFileName(file, folder, ext = "webp") {
 
 /** Re-encode every upload to a small WebP before storage. */
 async function optimizeForStore(file) {
+  const sharp = (await import("sharp")).default;
   const input = Buffer.from(await file.arrayBuffer());
   let quality = 58;
   let edge = STORE_MAX_EDGE;
@@ -99,6 +98,7 @@ async function optimizeForStore(file) {
 }
 
 async function uploadToBlob(file, folder) {
+  const { put } = await import("@vercel/blob");
   const optimized = await optimizeForStore(file);
   try {
     const blob = await put(optimized.pathname(folder), optimized.buffer, {
@@ -166,6 +166,7 @@ export async function deleteImage(publicId) {
   try {
     if (id.includes("blob.vercel-storage.com") || id.startsWith("http")) {
       if (!useBlob()) return;
+      const { del } = await import("@vercel/blob");
       await del(id, { token: process.env.BLOB_READ_WRITE_TOKEN });
       return;
     }

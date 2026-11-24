@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { deleteImage, uploadImage } from "./storage";
+import { deleteImage, uploadImage } from "./cloudinary";
 import {
   fileList,
   firstFile,
