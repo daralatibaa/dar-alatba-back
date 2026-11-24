@@ -51,13 +51,24 @@ function safeFileName(file, folder) {
 
 async function uploadToBlob(file, folder) {
   const buffer = Buffer.from(await file.arrayBuffer());
-  const blob = await put(safeFileName(file, folder), buffer, {
-    access: "public",
-    contentType: file.type || "image/jpeg",
-    token: process.env.BLOB_READ_WRITE_TOKEN,
-    addRandomSuffix: false,
-  });
-  return { url: blob.url, public_id: blob.url };
+  try {
+    const blob = await put(safeFileName(file, folder), buffer, {
+      access: "public",
+      contentType: file.type || "image/jpeg",
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+      addRandomSuffix: false,
+    });
+    return { url: blob.url, public_id: blob.url };
+  } catch (error) {
+    const detail = String(error?.message || error || "");
+    if (/private store/i.test(detail)) {
+      throw new ApiError(
+        "مخزن Blob مضبوط Private. احذف المتجر وأنشئ Blob جديد بوصول Public عشان صور المتجر تتفتح للزوّار.",
+        503,
+      );
+    }
+    throw new ApiError(detail ? `فشل رفع Blob: ${detail}` : "فشل رفع الصورة على Blob", 502);
+  }
 }
 
 async function uploadToCloudinary(file, folder) {
