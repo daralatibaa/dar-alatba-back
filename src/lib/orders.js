@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import { firstFile, requiredText, textValue } from "./body";
 import { sendOrderWhatsapp } from "./beon";
-import { deleteImage, uploadImage } from "./cloudinary";
+import { deleteImage, uploadImage } from "./storage";
 import { ApiError } from "./http";
 import { Order, Product } from "./models";
 import { STORE, shippingFeeFor } from "./store";
