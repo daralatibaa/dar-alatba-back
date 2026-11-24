@@ -57,43 +57,62 @@ function safeFileName(file, folder, ext = "webp") {
   return `${folder}/${stamp}-${safeBaseName(file)}.${ext}`;
 }
 
-/** Re-encode every upload to a small WebP before storage. */
+/** Re-encode every upload to a small WebP before storage. Falls back to original if sharp fails. */
 async function optimizeForStore(file) {
-  const sharp = (await import("sharp")).default;
   const input = Buffer.from(await file.arrayBuffer());
-  let quality = 58;
-  let edge = STORE_MAX_EDGE;
-  let output = null;
+  const originalType = file.type && file.type.startsWith("image/") ? file.type : "image/jpeg";
+  const originalExt = originalType.includes("webp")
+    ? "webp"
+    : originalType.includes("png")
+      ? "png"
+      : "jpg";
 
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    output = await sharp(input, { failOn: "none" })
-      .rotate()
-      .resize({
-        width: edge,
-        height: edge,
-        fit: "inside",
-        withoutEnlargement: true,
-      })
-      .webp({ quality, effort: 4, smartSubsample: true })
-      .toBuffer();
-    if (output.length <= STORE_MAX_BYTES) break;
-    if (quality > 38) {
-      quality -= 5;
-      continue;
+  try {
+    const sharp = (await import("sharp")).default;
+    let quality = 58;
+    let edge = STORE_MAX_EDGE;
+    let output = null;
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      output = await sharp(input, { failOn: "none" })
+        .rotate()
+        .resize({
+          width: edge,
+          height: edge,
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+        .webp({ quality, effort: 4, smartSubsample: true })
+        .toBuffer();
+      if (output.length <= STORE_MAX_BYTES) break;
+      if (quality > 38) {
+        quality -= 5;
+        continue;
+      }
+      edge = Math.max(640, Math.round(edge * 0.82));
+      quality = 48;
     }
-    edge = Math.max(640, Math.round(edge * 0.82));
-    quality = 48;
+
+    if (output?.length && output.length <= STORE_MAX_BYTES * 1.35) {
+      return {
+        buffer: output,
+        contentType: "image/webp",
+        pathname: (folder) => safeFileName(file, folder, "webp"),
+      };
+    }
+  } catch (error) {
+    console.error("sharp optimize failed, using client-compressed file", error);
   }
 
-  if (!output?.length) throw new ApiError("تعذر ضغط الصورة على السيرفر");
-  if (output.length > STORE_MAX_BYTES * 1.35) {
+  if (!input.length) throw new ApiError("تعذر ضغط الصورة على السيرفر");
+  if (input.length > MAX_UPLOAD_BYTES) {
     throw new ApiError("الصورة ما زالت كبيرة بعد الضغط. استخدم صورة أبسط.");
   }
 
   return {
-    buffer: output,
-    contentType: "image/webp",
-    pathname: (folder) => safeFileName(file, folder, "webp"),
+    buffer: input,
+    contentType: originalType,
+    pathname: (folder) => safeFileName(file, folder, originalExt),
   };
 }
 
