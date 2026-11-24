@@ -35,16 +35,31 @@ export async function uploadImage(file, folder) {
   configureCloudinary();
   const buffer = Buffer.from(await file.arrayBuffer());
 
-  const uploaded = await new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: "image" },
-      (error, result) => {
-        if (error || !result) reject(error || new Error("Upload failed"));
-        else resolve(result);
-      },
+  let uploaded;
+  try {
+    uploaded = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder, resource_type: "image" },
+        (error, result) => {
+          if (error || !result) reject(error || new Error("Upload failed"));
+          else resolve(result);
+        },
+      );
+      stream.end(buffer);
+    });
+  } catch (error) {
+    const detail = String(error?.message || error || "").trim();
+    if (/disabled/i.test(detail)) {
+      throw new ApiError(
+        "حساب Cloudinary معطّل. فعّله من لوحة Cloudinary أو حدّث CLOUDINARY_* في Vercel.",
+        503,
+      );
+    }
+    throw new ApiError(
+      detail ? `فشل رفع الصورة: ${detail}` : "فشل رفع الصورة",
+      502,
     );
-    stream.end(buffer);
-  });
+  }
 
   return { url: uploaded.secure_url, public_id: uploaded.public_id };
 }
