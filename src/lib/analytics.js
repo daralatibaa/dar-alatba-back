@@ -1,3 +1,4 @@
+import { cached } from "./cache";
 import { Order, Product } from "./models";
 
 const PAYMENTS = {
@@ -29,6 +30,10 @@ function rangeDays(days) {
 
 export async function getAnalytics(rawDays) {
   const days = rawDays === 7 ? 7 : 30;
+  return cached(`analytics:${days}`, 120 * 1000, () => computeAnalytics(days));
+}
+
+async function computeAnalytics(days) {
   const since = new Date();
   since.setDate(since.getDate() - (days - 1));
   since.setHours(0, 0, 0, 0);
@@ -36,7 +41,10 @@ export async function getAnalytics(rawDays) {
   const orders = await Order.find({
     createdAt: { $gte: since },
     status: { $ne: "cancelled" },
-  }).limit(1000);
+  })
+    .select("createdAt payableTotal totalPrice paymentMethod governorate items")
+    .limit(1000)
+    .lean();
 
   const keys = rangeDays(days);
   const byDay = new Map(keys.map((key) => [key, { date: key, revenue: 0, orders: 0 }]));

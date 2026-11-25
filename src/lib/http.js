@@ -6,8 +6,15 @@ export class ApiError extends Error {
   }
 }
 
-export function ok(data, message = "تم بنجاح", status = 200) {
-  return Response.json({ success: true, message, data }, { status });
+export function ok(data, message = "تم بنجاح", status = 200, headers = undefined) {
+  return Response.json({ success: true, message, data }, { status, headers });
+}
+
+/** CDN-friendly response for public catalog/settings reads. */
+export function publicOk(data, message = "تم بنجاح", maxAge = 60) {
+  return ok(data, message, 200, {
+    "Cache-Control": `public, s-maxage=${maxAge}, stale-while-revalidate=${Math.max(maxAge * 5, 300)}`,
+  });
 }
 
 export function fail(error) {

@@ -1,10 +1,17 @@
 import mongoose from "mongoose";
 import { firstFile, requiredText, textValue } from "./body";
 import { sendOrderWhatsapp } from "./beon";
+import { invalidate, invalidatePrefix } from "./cache";
 import { deleteImage, uploadImage } from "./storage";
 import { ApiError } from "./http";
 import { Order, Product } from "./models";
 import { STORE, shippingFeeFor } from "./store";
+
+function bustOrderCaches() {
+  invalidate("soldUnits");
+  invalidatePrefix("products:");
+  invalidatePrefix("analytics:");
+}
 
 function assertObjectId(value, label) {
   const id = textValue(value);
@@ -295,6 +302,7 @@ export async function createOrder(fields, files) {
       };
     }
     await order.save();
+    bustOrderCaches();
     return serialize(order);
   } catch (error) {
     await restoreStock(holds);
@@ -362,6 +370,7 @@ export async function completeOrder(id) {
   order.status = "completed";
   order.completedAt = new Date();
   await order.save();
+  invalidatePrefix("analytics:");
   return serialize(order);
 }
 
@@ -371,6 +380,7 @@ export async function deleteOrder(id) {
   await restoreOrderStock(order);
   await deleteImage(order.transferImage?.public_id);
   await order.deleteOne();
+  bustOrderCaches();
   return { _id: String(order._id) };
 }
 

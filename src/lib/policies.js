@@ -1,3 +1,4 @@
+import { cached, invalidate } from "./cache";
 import { ApiError } from "./http";
 import { Policy } from "./models";
 
@@ -100,8 +101,11 @@ async function ensurePolicy(key) {
 }
 
 export async function getPolicy(key) {
-  const item = await ensurePolicy(key);
-  return serialize(item);
+  assertKey(key);
+  return cached(`policy:${key}`, 5 * 60 * 1000, async () => {
+    const item = await ensurePolicy(key);
+    return serialize(item);
+  });
 }
 
 export async function updatePolicy(key, fields) {
@@ -127,6 +131,7 @@ export async function updatePolicy(key, fields) {
 
   item.set({ titleAr, titleEn, contentAr, contentEn });
   await item.save();
+  invalidate(`policy:${key}`);
   return serialize(item);
 }
 

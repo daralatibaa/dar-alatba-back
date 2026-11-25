@@ -1,3 +1,4 @@
+import { cached, invalidate } from "./cache";
 import { ApiError } from "./http";
 import { StoreSettings } from "./models";
 import { listAnnouncements } from "./announcements";
@@ -40,6 +41,18 @@ export async function getEditableStoreSettings() {
   };
 }
 
+export async function getPublicStoreSettings() {
+  return cached("store:settings", 60 * 1000, async () => {
+    const freeShippingFrom = await freeShippingThresholdFromTicker();
+    const editable = await getEditableStoreSettings();
+    return {
+      ...STORE,
+      ...editable,
+      freeShippingFrom,
+    };
+  });
+}
+
 export async function updateEditableStoreSettings(fields) {
   const item = await ensureStoreSettings();
   if (fields.shopPageSize === undefined || fields.shopPageSize === "") {
@@ -51,6 +64,7 @@ export async function updateEditableStoreSettings(fields) {
   }
   item.shopPageSize = shopPageSize;
   await item.save();
+  invalidate("store:settings");
   return {
     shopPageSize: item.shopPageSize,
   };

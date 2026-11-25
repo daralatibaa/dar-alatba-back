@@ -1,8 +1,9 @@
 import { listAnnouncements } from "@/lib/announcements";
-import { ok } from "@/lib/http";
+import { publicOk } from "@/lib/http";
 import { handle } from "@/lib/route";
 
-export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export const GET = handle(async () => ok(await listAnnouncements(true), "تم جلب الشريط"));
+export const GET = handle(async () =>
+  publicOk(await listAnnouncements(true), "تم جلب العبارات", 60),
+);

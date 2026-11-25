@@ -9,6 +9,7 @@ import {
   textValue,
 } from "./body";
 import { ApiError } from "./http";
+import { cached, invalidateCatalog } from "./cache";
 import { Category, Color, Order, Product, Size } from "./models";
 
 const productPopulate = [
@@ -211,10 +212,12 @@ function subtreeSpan(rootId, byId) {
 }
 
 async function loadCategoryMap() {
-  const categories = await Category.find()
-    .select("_id nameAr nameEn parent isActive")
-    .lean();
-  return buildCategoryMap(categories);
+  return cached("categories:map", 60 * 1000, async () => {
+    const categories = await Category.find()
+      .select("_id nameAr nameEn parent isActive")
+      .lean();
+    return buildCategoryMap(categories);
+  });
 }
 
 function serializeCategory(category, byId = null) {
@@ -373,30 +376,35 @@ function serializeProduct(product, byId = null) {
 }
 
 async function loadSoldUnitsMap() {
-  const rows = await Order.aggregate([
-    { $match: { status: { $ne: "cancelled" } } },
-    { $unwind: "$items" },
-    { $match: { "items.product": { $ne: null } } },
-    {
-      $group: {
-        _id: "$items.product",
-        units: { $sum: { $ifNull: ["$items.quantity", 0] } },
+  return cached("soldUnits", 5 * 60 * 1000, async () => {
+    const rows = await Order.aggregate([
+      { $match: { status: { $ne: "cancelled" } } },
+      { $unwind: "$items" },
+      { $match: { "items.product": { $ne: null } } },
+      {
+        $group: {
+          _id: "$items.product",
+          units: { $sum: { $ifNull: ["$items.quantity", 0] } },
+        },
       },
-    },
-  ]);
-  return new Map(rows.map((row) => [String(row._id), Number(row.units) || 0]));
+    ]);
+    return new Map(rows.map((row) => [String(row._id), Number(row.units) || 0]));
+  });
 }
 
 async function loadProducts(filter = {}) {
-  const [products, byId, soldMap] = await Promise.all([
-    Product.find(filter).populate(productPopulate).sort({ createdAt: -1 }),
-    loadCategoryMap(),
-    loadSoldUnitsMap(),
-  ]);
-  return products.map((product) => {
-    const serialized = serializeProduct(product, byId);
-    serialized.soldUnits = soldMap.get(String(product._id)) || 0;
-    return serialized;
+  const cacheKey = `products:${JSON.stringify(filter || {})}`;
+  return cached(cacheKey, 60 * 1000, async () => {
+    const [products, byId, soldMap] = await Promise.all([
+      Product.find(filter).populate(productPopulate).sort({ createdAt: -1 }).lean(),
+      loadCategoryMap(),
+      loadSoldUnitsMap(),
+    ]);
+    return products.map((product) => {
+      const serialized = serializeProduct(product, byId);
+      serialized.soldUnits = soldMap.get(String(product._id)) || 0;
+      return serialized;
+    });
   });
 }
 
@@ -574,11 +582,14 @@ async function assertOptionsExist(colorIds, sizeIds) {
 }
 
 export async function listCategories() {
-  const categories = await Category.find()
-    .populate("parent", "nameAr nameEn isActive")
-    .sort({ sortOrder: 1, createdAt: 1 });
-  const byId = buildCategoryMap(categories);
-  return categories.map((category) => serializeCategory(category, byId)).sort(byCategoryOrder);
+  return cached("categories:all", 120 * 1000, async () => {
+    const categories = await Category.find()
+      .populate("parent", "nameAr nameEn isActive")
+      .sort({ sortOrder: 1, createdAt: 1 })
+      .lean();
+    const byId = buildCategoryMap(categories);
+    return categories.map((category) => serializeCategory(category, byId)).sort(byCategoryOrder);
+  });
 }
 
 export async function addCategory(fields, files) {
@@ -611,6 +622,7 @@ export async function addCategory(fields, files) {
   });
   await category.populate("parent", "nameAr nameEn isActive");
   const byId = await loadCategoryMap();
+  invalidateCatalog();
   return serializeCategory(category, byId);
 }
 
@@ -664,6 +676,7 @@ export async function updateCategory(id, fields, files) {
   await category.save();
   await category.populate("parent", "nameAr nameEn isActive");
   const byId = await loadCategoryMap();
+  invalidateCatalog();
   return serializeCategory(category, byId);
 }
 
@@ -691,6 +704,7 @@ export async function removeCategory(id) {
     ]),
   );
   await Category.deleteMany({ _id: { $in: ids } });
+  invalidateCatalog();
   return { deletedProducts: products.length, deletedCategories: ids.length };
 }
 
@@ -702,12 +716,14 @@ export async function listProducts(categoryId) {
 
 export async function getProduct(id) {
   const productId = assertObjectId(id, "المنتج");
-  const [product, byId] = await Promise.all([
-    Product.findById(productId).populate(productPopulate),
-    loadCategoryMap(),
-  ]);
-  if (!product) throw new ApiError("المنتج غير موجود", 404);
-  return serializeProduct(product, byId);
+  return cached(`products:one:${productId}`, 60 * 1000, async () => {
+    const [product, byId] = await Promise.all([
+      Product.findById(productId).populate(productPopulate).lean(),
+      loadCategoryMap(),
+    ]);
+    if (!product) throw new ApiError("المنتج غير موجود", 404);
+    return serializeProduct(product, byId);
+  });
 }
 
 async function productPayload(fields, files, current) {
@@ -795,6 +811,7 @@ export async function addProduct(fields, files) {
   const payload = await productPayload(fields, files);
   const product = await Product.create(payload);
   await product.populate(productPopulate);
+  invalidateCatalog();
   return serializeProduct(product);
 }
 
@@ -807,6 +824,7 @@ export async function updateProduct(id, fields, files) {
   product.set(payload);
   await product.save();
   await product.populate(productPopulate);
+  invalidateCatalog();
   return serializeProduct(product);
 }
 
@@ -816,6 +834,7 @@ export async function removeProduct(id) {
   if (!product) throw new ApiError("المنتج غير موجود", 404);
   await Promise.all((product.images || []).map((image) => deleteImage(image.public_id)));
   await product.deleteOne();
+  invalidateCatalog();
   return { _id: productId };
 }
 
@@ -828,8 +847,10 @@ async function assertUniqueOption(Model, nameAr, nameEn, excludeId, label) {
 }
 
 export async function listColors() {
-  const colors = await Color.find().sort({ nameAr: 1 });
-  return colors.map(serializeOption);
+  return cached("colors:all", 120 * 1000, async () => {
+    const colors = await Color.find().sort({ nameAr: 1 }).lean();
+    return colors.map(serializeOption);
+  });
 }
 
 export async function addColor(fields) {
@@ -840,6 +861,7 @@ export async function addColor(fields) {
     hex: parseHex(fields.hex),
     isActive: parseBoolean(fields.isActive, true),
   });
+  invalidateCatalog();
   return serializeOption(color);
 }
 
@@ -855,6 +877,7 @@ export async function updateColor(id, fields) {
     isActive: parseBoolean(fields.isActive, color.isActive),
   });
   await color.save();
+  invalidateCatalog();
   return serializeOption(color);
 }
 
@@ -866,12 +889,15 @@ export async function removeColor(id) {
   if (used) throw new ApiError("لا يمكن حذف اللون لأنه مستخدم في منتج");
   const color = await Color.findByIdAndDelete(colorId);
   if (!color) throw new ApiError("اللون غير موجود", 404);
+  invalidateCatalog();
   return { _id: colorId };
 }
 
 export async function listSizes() {
-  const sizes = await Size.find().sort({ sortOrder: 1, nameAr: 1 });
-  return sizes.map(serializeOption);
+  return cached("sizes:all", 120 * 1000, async () => {
+    const sizes = await Size.find().sort({ sortOrder: 1, nameAr: 1 }).lean();
+    return sizes.map(serializeOption);
+  });
 }
 
 export async function addSize(fields) {
@@ -883,6 +909,7 @@ export async function addSize(fields) {
     sortOrder: (last?.sortOrder ?? 0) + 1,
     isActive: parseBoolean(fields.isActive, true),
   });
+  invalidateCatalog();
   return serializeOption(size);
 }
 
@@ -897,6 +924,7 @@ export async function updateSize(id, fields) {
     isActive: parseBoolean(fields.isActive, size.isActive),
   });
   await size.save();
+  invalidateCatalog();
   return serializeOption(size);
 }
 
@@ -908,6 +936,7 @@ export async function removeSize(id) {
   if (used) throw new ApiError("لا يمكن حذف المقاس لأنه مستخدم في منتج");
   const size = await Size.findByIdAndDelete(sizeId);
   if (!size) throw new ApiError("المقاس غير موجود", 404);
+  invalidateCatalog();
   return { _id: sizeId };
 }
 

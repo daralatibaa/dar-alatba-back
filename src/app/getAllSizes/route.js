@@ -1,8 +1,7 @@
 import { listSizes } from "@/lib/catalogService";
-import { ok } from "@/lib/http";
+import { publicOk } from "@/lib/http";
 import { handle } from "@/lib/route";
 
-export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export const GET = handle(async () => ok(await listSizes(), "تم جلب المقاسات"));
+export const GET = handle(async () => publicOk(await listSizes(), "تم جلب المقاسات", 120));

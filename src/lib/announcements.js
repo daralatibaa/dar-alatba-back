@@ -1,6 +1,11 @@
 import mongoose from "mongoose";
+import { cached, invalidate } from "./cache";
 import { ApiError } from "./http";
 import { Announcement } from "./models";
+
+function bustAnnouncementCache() {
+  invalidate("announcements:all", "announcements:active", "store:settings");
+}
 
 function exactText(value, label) {
   const text = typeof value === "string" ? value : value == null ? "" : String(value);
@@ -42,9 +47,12 @@ function serialize(item) {
 }
 
 export async function listAnnouncements(activeOnly = false) {
-  const filter = activeOnly ? { isActive: true } : {};
-  const items = await Announcement.find(filter).sort({ sortOrder: 1, createdAt: 1 });
-  return items.map(serialize);
+  const key = activeOnly ? "announcements:active" : "announcements:all";
+  return cached(key, 60 * 1000, async () => {
+    const filter = activeOnly ? { isActive: true } : {};
+    const items = await Announcement.find(filter).sort({ sortOrder: 1, createdAt: 1 }).lean();
+    return items.map(serialize);
+  });
 }
 
 export async function addAnnouncement(fields) {
@@ -55,6 +63,7 @@ export async function addAnnouncement(fields) {
     isActive: parseActive(fields.isActive, true),
     sortOrder: (last?.sortOrder ?? 0) + 1,
   });
+  bustAnnouncementCache();
   return serialize(item);
 }
 
@@ -80,6 +89,7 @@ export async function updateAnnouncement(id, fields) {
 
   item.set(next);
   await item.save();
+  bustAnnouncementCache();
   return serialize(item);
 }
 
@@ -87,5 +97,6 @@ export async function removeAnnouncement(id) {
   assertId(id);
   const item = await Announcement.findByIdAndDelete(id);
   if (!item) throw new ApiError("العبارة غير موجودة", 404);
+  bustAnnouncementCache();
   return { _id: String(id) };
 }
