@@ -122,7 +122,40 @@ function readItems(value) {
   }
 }
 
-function serialize(order) {
+function sameColorId(left, right) {
+  return (left ? String(left) : "") === (right ? String(right) : "");
+}
+
+/** Cloudinary account for this store is no longer publicly readable (401). */
+function isBrokenImageUrl(url) {
+  const value = String(url || "");
+  if (!value) return true;
+  return /res\.cloudinary\.com/i.test(value);
+}
+
+function imageFromProduct(product, colorId = "") {
+  const images = Array.isArray(product?.images) ? product.images.filter((item) => item?.url) : [];
+  if (!images.length) return "";
+  const firstUsable = (list) =>
+    list.find((image) => !isBrokenImageUrl(image.url))?.url || list[0]?.url || "";
+  if (colorId) {
+    const matched = images.filter((image) => sameColorId(image.colorId, colorId));
+    if (matched.length) {
+      const hit = firstUsable(matched);
+      if (hit && !isBrokenImageUrl(hit)) return hit;
+    }
+  }
+  return firstUsable(images);
+}
+
+function resolveLineImage(line, productById) {
+  const stored = String(line?.image || "");
+  if (stored && !isBrokenImageUrl(stored)) return stored;
+  const product = productById.get(String(line?.product || ""));
+  return imageFromProduct(product, line?.colorId) || stored || "";
+}
+
+function serialize(order, productById = null) {
   const item = order.toObject ? order.toObject() : order;
   return {
     ...item,
@@ -130,8 +163,25 @@ function serialize(order) {
     items: (item.items || []).map((line) => ({
       ...line,
       product: line.product ? String(line.product) : null,
+      image: productById
+        ? resolveLineImage({ ...line, product: line.product ? String(line.product) : "" }, productById)
+        : line.image || "",
     })),
   };
+}
+
+async function productImageMap(orders) {
+  const ids = [
+    ...new Set(
+      (orders || [])
+        .flatMap((order) => order.items || [])
+        .map((line) => (line.product ? String(line.product) : ""))
+        .filter((id) => mongoose.Types.ObjectId.isValid(id)),
+    ),
+  ];
+  if (!ids.length) return new Map();
+  const products = await Product.find({ _id: { $in: ids } }).select("images");
+  return new Map(products.map((product) => [String(product._id), product]));
 }
 
 export async function createOrder(fields, files) {
@@ -166,17 +216,23 @@ export async function createOrder(fields, files) {
     const topName = textValue(raw.topSizeName || raw.sizeName);
     const pantsName = textValue(raw.pantsSizeName);
     const pantsId = textValue(raw.pantsSizeId);
+    const colorId = textValue(raw.colorId);
     const sizeLabel =
       pantsName && pantsName !== topName ? `توب ${topName} / بنطلون ${pantsName}` : topName;
     const variant = [sizeLabel, textValue(raw.colorName)].filter(Boolean).join(" / ");
+    const clientImage = textValue(raw.image);
+    const image =
+      imageFromProduct(product, colorId) ||
+      (!isBrokenImageUrl(clientImage) ? clientImage : "") ||
+      "";
     lines.push({
       product: product._id,
       name: variant ? `${product.nameAr} (${variant})` : product.nameAr,
       price: product.price,
       quantity,
-      image: product.images?.[0]?.url || "",
+      image,
       sizeId: textValue(raw.sizeId),
-      colorId: textValue(raw.colorId),
+      colorId,
       sizeName: sizeLabel,
       colorName: textValue(raw.colorName),
       pantsSizeId: pantsId,
@@ -254,7 +310,8 @@ export async function listOrders(status) {
       ? { status: { $in: ["pending", "received", "cancelled"] } }
       : { status };
   const orders = await Order.find(filter).sort({ createdAt: -1 }).limit(200);
-  return orders.map(serialize);
+  const productById = await productImageMap(orders);
+  return orders.map((order) => serialize(order, productById));
 }
 
 function phoneMatches(storedPhone, incomingPhone) {

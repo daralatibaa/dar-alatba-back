@@ -196,6 +196,10 @@ function OrderCard({ order, onComplete, onDelete, onPreview, completingId, delet
                 src={item.image || item.product?.images?.[0]?.url || "/images/logo.jpeg"}
                 alt={item.name}
                 className="w-6 h-8 object-cover rounded"
+                onError={(event) => {
+                  if (event.currentTarget.src.includes("/images/logo.jpeg")) return;
+                  event.currentTarget.src = "/images/logo.jpeg";
+                }}
               />
               <div className="text-[11px] font-sans">
                 <span className="font-bold text-gray-800">{item.name}</span>

@@ -85,6 +85,15 @@ export async function getAnalytics(rawDays) {
   const productIds = [...products.keys()].filter((id) => id && id.length === 24);
   const productDocs = await Product.find({ _id: { $in: productIds } }).populate("category", "nameAr nameEn");
   const categoryOf = new Map(productDocs.map((product) => [String(product._id), product.category]));
+  const imageOf = new Map(
+    productDocs.map((product) => {
+      const images = Array.isArray(product.images) ? product.images : [];
+      const live = images.find((image) => image?.url && !/res\.cloudinary\.com/i.test(image.url))?.url
+        || images[0]?.url
+        || "";
+      return [String(product._id), live];
+    }),
+  );
   for (const item of products.values()) {
     const category = categoryOf.get(item.id);
     const ar = category?.nameAr || "بدون قسم";
@@ -92,6 +101,10 @@ export async function getAnalytics(rawDays) {
     const current = categories.get(ar) || { ar, en, value: 0 };
     current.value += item.revenue;
     categories.set(ar, current);
+    const liveImage = imageOf.get(item.id) || "";
+    if (liveImage && (!item.image || /res\.cloudinary\.com/i.test(item.image))) {
+      item.image = liveImage;
+    }
   }
 
   const orderCount = orders.length;

@@ -9,7 +9,7 @@ import {
   textValue,
 } from "./body";
 import { ApiError } from "./http";
-import { Category, Color, Product, Size } from "./models";
+import { Category, Color, Order, Product, Size } from "./models";
 
 const productPopulate = [
   {
@@ -366,17 +366,38 @@ function serializeProduct(product, byId = null) {
     colors,
     sizes,
     variants,
+    soldUnits: Number(product.soldUnits) || 0,
     createdAt: product.createdAt,
     updatedAt: product.updatedAt,
   };
 }
 
+async function loadSoldUnitsMap() {
+  const rows = await Order.aggregate([
+    { $match: { status: { $ne: "cancelled" } } },
+    { $unwind: "$items" },
+    { $match: { "items.product": { $ne: null } } },
+    {
+      $group: {
+        _id: "$items.product",
+        units: { $sum: { $ifNull: ["$items.quantity", 0] } },
+      },
+    },
+  ]);
+  return new Map(rows.map((row) => [String(row._id), Number(row.units) || 0]));
+}
+
 async function loadProducts(filter = {}) {
-  const [products, byId] = await Promise.all([
+  const [products, byId, soldMap] = await Promise.all([
     Product.find(filter).populate(productPopulate).sort({ createdAt: -1 }),
     loadCategoryMap(),
+    loadSoldUnitsMap(),
   ]);
-  return products.map((product) => serializeProduct(product, byId));
+  return products.map((product) => {
+    const serialized = serializeProduct(product, byId);
+    serialized.soldUnits = soldMap.get(String(product._id)) || 0;
+    return serialized;
+  });
 }
 
 function bilingualNames(fields, arabicLabel, englishLabel, max = 160) {
